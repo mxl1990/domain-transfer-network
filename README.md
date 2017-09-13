@@ -31,17 +31,17 @@ $ python prepro.py
 
 #### Pretrain the model f
 ```bash
-$ python main.py --mode='pretrain'
+$ python main.py --mode=pretrain
 ```
 
 #### Train the model G and D
 ```bash
-$ python main.py --mode='train'
+$ python main.py --mode=train
 ```
 
 #### Transfer SVHN to MNIST
 ```bash
-$ python main.py --mode='eval'
+$ python main.py --mode=eval
 ```
 <br>
 
