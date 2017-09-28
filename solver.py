@@ -6,20 +6,25 @@ import os
 import scipy.io
 import scipy.misc
 
+from glob import glob
+
 
 class Solver(object):
 
-    def __init__(self, model, batch_size=100, pretrain_iter=20000, train_iter=2000, sample_iter=100, 
-                 svhn_dir='svhn', mnist_dir='mnist', log_dir='logs', sample_save_path='sample', 
-                 model_save_path='model', pretrained_model='model/svhn_model-20000', test_model='model/dtn-1800'):
+    def __init__(self, sess, model, batch_size=64, pretrain_iter=20000, train_iter=2000, sample_iter=100, 
+                 source_dir='source', target_dir='target', log_dir='logs', sample_save_path='sample', 
+                 model_save_path='model', 
+                 pretrained_model='D:\\workspace\\tensorflow-101.git\\DTN\\trunk\\checkpoint\\celebA_64_96_96\\DCGAN.model-18990', 
+                 test_model='model/dtn-2000'):
         
+        self.sess = sess
         self.model = model
         self.batch_size = batch_size
         self.pretrain_iter = pretrain_iter
         self.train_iter = train_iter
         self.sample_iter = sample_iter
-        self.svhn_dir = svhn_dir
-        self.mnist_dir = mnist_dir
+        self.source_dir = source_dir
+        self.target_dir = target_dir
         self.log_dir = log_dir
         self.sample_save_path = sample_save_path
         self.model_save_path = model_save_path
@@ -27,6 +32,39 @@ class Solver(object):
         self.test_model = test_model
         self.config = tf.ConfigProto()
         self.config.gpu_options.allow_growth=True
+        self.config.operation_timeout_in_ms = 1000000
+
+
+
+    # def load_source(self, image_dir):
+    #   return self._load_images(image_dir)
+
+    # def load_target(self, image_dir):
+    #   return self._load_images(image_dir)
+
+    def load_images(self, image_dir):
+        import os
+        paths = glob(os.path.join(image_dir, "*.jpg"))
+        file_queue = tf.train.string_input_producer(paths, capacity=len(paths))
+        images = []
+        num_threads = 8
+        for _ in range(num_threads):
+            reader = tf.WholeFileReader()
+            key, image_content = reader.read(file_queue)
+            image = tf.image.decode_image(image_content)
+            image = tf.cast(image, tf.float32)
+            image = image / 127.5 - 1
+            images.append([image])
+
+        return tf.train.batch_join(
+                    images,
+                    batch_size=self.batch_size,
+                    shapes=[96, 96, 3],
+                    enqueue_many=False,
+                    capacity=4*num_threads*self.batch_size,
+                    allow_smaller_final_batch=True,
+            )
+
 
     def load_svhn(self, image_dir, split='train'):
         print ('loading svhn image dataset..')
@@ -103,25 +141,35 @@ class Solver(object):
                     print ('svhn_model-%d saved..!' %(step+1))
 
     def train(self):
+        sess = self.sess
         # load svhn dataset
-        svhn_images, _ = self.load_svhn(self.svhn_dir, split='train')
-        mnist_images, _ = self.load_mnist(self.mnist_dir, split='train')
+        # svhn_images, _ = self.load_svhn(self.svhn_dir, split='train')
+        # mnist_images, _ = self.load_mnist(self.mnist_dir, split='train')
+        source_image = self.load_images(self.source_dir)
+        target_image = self.load_images(self.target_dir)
 
         # build a graph
         model = self.model
-        model.build_model()
+        model.build_model(sess)
+
+        #f函数用DCGAN代替
+        
 
         # make directory if not exists
         if tf.gfile.Exists(self.log_dir):
             tf.gfile.DeleteRecursively(self.log_dir)
         tf.gfile.MakeDirs(self.log_dir)
 
-        with tf.Session(config=self.config) as sess:
+        # with tf.Session(config=self.config) as sess:
+        if True:
+            sess = self.sess
             # initialize G and D
             tf.global_variables_initializer().run()
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess=self.sess, coord=coord)
             # restore variables of F
             print ('loading pretrained model F..')
-            variables_to_restore = slim.get_model_variables(scope='content_extractor')
+            variables_to_restore = slim.get_model_variables(scope='discriminator')
             restorer = tf.train.Saver(variables_to_restore)
             restorer.restore(sess, self.pretrained_model)
             summary_writer = tf.summary.FileWriter(logdir=self.log_dir, graph=tf.get_default_graph())
@@ -130,10 +178,11 @@ class Solver(object):
             print ('start training..!')
             f_interval = 15
             for step in range(self.train_iter+1):
+
+                src_images = sess.run(source_image)
+                trg_images = sess.run(target_image)
                 
-                i = step % int(svhn_images.shape[0] / self.batch_size)
-                # train the model for source domain S
-                src_images = svhn_images[i*self.batch_size:(i+1)*self.batch_size]
+
                 feed_dict = {model.src_images: src_images}
                 
                 sess.run(model.d_train_op_src, feed_dict) 
@@ -147,7 +196,7 @@ class Solver(object):
                 if step > 1600:
                     f_interval = 30
                 
-                if i % f_interval == 0:
+                if step % f_interval == 0:
                     sess.run(model.f_train_op_src, feed_dict)
                 
                 if (step+1) % 10 == 0:
@@ -158,8 +207,6 @@ class Solver(object):
                                %(step+1, self.train_iter, dl, gl, fl))
                 
                 # train the model for target domain T
-                j = step % int(mnist_images.shape[0] / self.batch_size)
-                trg_images = mnist_images[j*self.batch_size:(j+1)*self.batch_size]
                 feed_dict = {model.src_images: src_images, model.trg_images: trg_images}
                 sess.run(model.d_train_op_trg, feed_dict)
                 sess.run(model.d_train_op_trg, feed_dict)
@@ -181,24 +228,30 @@ class Solver(object):
                 
     def eval(self):
         # build model
-        model = self.model
-        model.build_model()
+        # with tf.Session(config=self.config) as sess:
+        if True:    
+            sess = self.sess
+            model = self.model
+            model.build_model(sess)
 
-        # load svhn dataset
-        svhn_images, _ = self.load_svhn(self.svhn_dir)
-
-        with tf.Session(config=self.config) as sess:
+            # load svhn dataset
+            source_image = self.load_images(self.source_dir)   
+            print("source_image", source_image)     
             # load trained parameters
             print ('loading test model..')
             saver = tf.train.Saver()
             saver.restore(sess, self.test_model)
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess=self.sess, coord=coord)
 
             print ('start sampling..!')
             for i in range(self.sample_iter):
                 # train model for source domain S
-                batch_images = svhn_images[i*self.batch_size:(i+1)*self.batch_size]
+                batch_images = sess.run(source_image)
+                print("get batch images")
                 feed_dict = {model.images: batch_images}
                 sampled_batch_images = sess.run(model.sampled_images, feed_dict)
+                print("generate images")
 
                 # merge and save source images and sampled target images
                 merged = self.merge_images(batch_images, sampled_batch_images)
