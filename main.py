@@ -10,22 +10,26 @@ FLAGS = flags.FLAGS
 
 def main(_):
     
-    model = DTN(mode=FLAGS.mode, learning_rate=0.0003)
-    solver = Solver(model, batch_size=100, pretrain_iter=20000, train_iter=2000, sample_iter=100, 
-                    svhn_dir='svhn', mnist_dir='mnist', model_save_path=FLAGS.model_save_path, sample_save_path=FLAGS.sample_save_path)
-    
-    # create directories if not exist
-    if not tf.gfile.Exists(FLAGS.model_save_path):
-        tf.gfile.MakeDirs(FLAGS.model_save_path)
-    if not tf.gfile.Exists(FLAGS.sample_save_path):
-        tf.gfile.MakeDirs(FLAGS.sample_save_path)
-    
-    if FLAGS.mode == 'pretrain':
-        solver.pretrain()
-    elif FLAGS.mode == 'train':
-        solver.train()
-    else:
-        solver.eval()
+    with tf.Session() as sess:
+
+        model = DTN(mode=FLAGS.mode, learning_rate=0.0003)
+        solver = Solver(sess, model, batch_size=64, pretrain_iter=20000, train_iter=2000, sample_iter=100, 
+                        source_dir='D:\\workspace\\tensorflow-101.git\\DCGAN\\trunk\\data\\resize', 
+                        target_dir='D:\\workspace\\tensorflow-101.git\\DCGAN\\trunk\\data\\faces', 
+                        model_save_path=FLAGS.model_save_path, sample_save_path=FLAGS.sample_save_path)
+        
+        # create directories if not exist
+        if not tf.gfile.Exists(FLAGS.model_save_path):
+            tf.gfile.MakeDirs(FLAGS.model_save_path)
+        if not tf.gfile.Exists(FLAGS.sample_save_path):
+            tf.gfile.MakeDirs(FLAGS.sample_save_path)
+        
+        if FLAGS.mode == 'pretrain':
+            solver.pretrain()
+        elif FLAGS.mode == 'train':
+            solver.train()
+        else:
+            solver.eval()
         
 if __name__ == '__main__':
     tf.app.run()
