@@ -98,7 +98,6 @@ def linear(input_, output_size, scope=None, stddev=0.02, bias_start=0.0, with_w=
   '''
   # 获取input_的shape保存至list中
   shape = input_.get_shape().as_list()
-  print("shape is", shape[1])
 
   with tf.variable_scope(scope or "Linear"):
     matrix = tf.get_variable("Matrix", [shape[1], output_size], tf.float32,
