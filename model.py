@@ -10,35 +10,13 @@ from utils import *
 class DTN(object):
     """Domain Transfer Network
     """
-    def __init__(self, mode='train', learning_rate=0.0003):
+    def __init__(self, mode='train', learning_rate=0.0003, height=96, width=None, batch_size=64):
         self.mode = mode
         self.learning_rate = learning_rate
+        self.height = height
+        self.width = width
+        self.batch_size = batch_size
         
-    # def content_extractor(self, images, reuse=False):
-    #     # images: (batch, 32, 32, 3) or (batch, 32, 32, 1)
-        
-    #     if images.get_shape()[3] == 1:
-    #         # For mnist dataset, replicate the gray scale image 3 times.
-    #         images = tf.image.grayscale_to_rgb(images)
-        
-    #     with tf.variable_scope('content_extractor', reuse=reuse):
-    #         with slim.arg_scope([slim.conv2d], padding='SAME', activation_fn=None,
-    #                              stride=2,  weights_initializer=tf.contrib.layers.xavier_initializer()):
-    #             with slim.arg_scope([slim.batch_norm], decay=0.95, center=True, scale=True, 
-    #                                 activation_fn=tf.nn.relu, is_training=(self.mode=='train' or self.mode=='pretrain')):
-                    
-    #                 net = slim.conv2d(images, 64, [3, 3], scope='conv1')   # (batch_size, 16, 16, 64)
-    #                 net = slim.batch_norm(net, scope='bn1')
-    #                 net = slim.conv2d(net, 128, [3, 3], scope='conv2')     # (batch_size, 8, 8, 128)
-    #                 net = slim.batch_norm(net, scope='bn2')
-    #                 net = slim.conv2d(net, 256, [3, 3], scope='conv3')     # (batch_size, 4, 4, 256)
-    #                 net = slim.batch_norm(net, scope='bn3')
-    #                 net = slim.conv2d(net, 128, [4, 4], padding='VALID', scope='conv4')   # (batch_size, 1, 1, 128)
-    #                 net = slim.batch_norm(net, activation_fn=tf.nn.tanh, scope='bn4')
-    #                 if self.mode == 'pretrain':
-    #                     net = slim.conv2d(net, 10, [1, 1], padding='VALID', scope='out')
-    #                     net = slim.flatten(net)
-    #                 return net
                 
     def generator(self, inputs, reuse=False):
         # inputs: (batch, 1, 1, 128)
@@ -74,6 +52,14 @@ class DTN(object):
                     net = slim.conv2d(net, 1, [4, 4], padding='VALID', scope='conv4')   # (batch_size, 1, 1, 1)
                     net = slim.flatten(net)
                     return net
+
+    def TV_loss(self, batch_size, height, width, images):
+        loss = 0.0
+        y = tf.slice(images, [0, 0, 0, 0], tf.stack([-1, height - 1, -1, -1])) - tf.slice(images, [0, 1, 0, 0], [-1, -1, -1, -1])
+        x = tf.slice(images, [0, 0, 0, 0], tf.stack([-1, -1, width - 1, -1])) - tf.slice(images, [0, 0, 1, 0], [-1, -1, -1, -1])
+        loss = tf.sqrt( tf.nn.l2_loss(x) / tf.to_float(tf.size(x)) + tf.nn.l2_loss(y) / tf.to_float(tf.size(y)) )
+        return loss
+
                 
     def build_model(self, sess):
         
@@ -98,27 +84,35 @@ class DTN(object):
             self.summary_op = tf.summary.merge([loss_summary, accuracy_summary])
 
         elif self.mode == 'eval':
-            self.images = tf.placeholder(tf.float32, [64, 96, 96, 3], 'source_images1')
+            h, w = self.height, self.width
+            self.images = tf.placeholder(tf.float32, [self.batch_size, h, w, 3], 'source_images')
 
             # source domain (svhn to mnist)
-            dcgan = DCGAN(sess, input_height=96, input_width=96, is_crop=False,
-                 batch_size=64, sample_num = 64, output_height=96, output_width=96)
+            dcgan = DCGAN(sess, input_height=h, input_width=w, is_crop=False,
+                 batch_size=self.batch_size, sample_num = 64, output_height=h, output_width=w)
 
             _, _, self.fx = dcgan.discriminator(self.images, reuse=True)
             self.sampled_images = self.generator(self.fx)
 
         elif self.mode == 'train':
-            self.src_images = tf.placeholder(tf.float32, [64, 96, 96, 3], 'source_images')
-            self.trg_images = tf.placeholder(tf.float32, [64, 96, 96, 3], 'target_images')
-            dcgan = DCGAN(sess, input_height=96, input_width=96, is_crop=False,
-                 batch_size=64, sample_num = 64, output_height=96, output_width=96)
+            h, w = self.height, self.width
+            batch_size = self.batch_size
+            self.src_images = tf.placeholder(tf.float32, [batch_size, h, w, 3], 'source_images')
+            self.trg_images = tf.placeholder(tf.float32, [batch_size, h, w, 3], 'target_images')
+            dcgan = DCGAN(sess, input_height=h, input_width=w, is_crop=False,
+                 batch_size=batch_size, sample_num =64, output_height=h, output_width=w)
             
             # source domain (svhn to mnist)
             # self.fx = self.content_extractor(self.src_images)
-            _, _, self.fx = dcgan.discriminator(self.src_images, reuse=True)
+            _, _, self.fx_src = dcgan.discriminator(self.src_images, reuse=True)
 
-            self.fake_images = self.generator(self.fx)
-            print(self.fake_images)
+            # self.random_fx = tf.random_shuffle(self.fx)
+            shape = self.fx_src.get_shape().as_list()
+            self.g_input_src = tf.placeholder(dtype=tf.float32, shape=shape, name='g_input_src')
+            self.fake_images = self.generator(self.g_input_src)
+            b_s, h, w, _ = self.fake_images.shape
+            self.g_tv_loss_src = self.TV_loss(b_s, h, w, self.fake_images)
+            print("get source tv loss")
 
             self.logits = self.discriminator(self.fake_images)
             _, _, self.fgfx = dcgan.discriminator(self.fake_images, reuse=True)
@@ -128,9 +122,14 @@ class DTN(object):
             # self.g_loss_src = slim.losses.sigmoid_cross_entropy(self.logits, tf.ones_like(self.logits))
 
             self.d_loss_src = tf.losses.sigmoid_cross_entropy(logits=self.logits, multi_class_labels=tf.zeros_like(self.logits))
-            self.g_loss_src = tf.losses.sigmoid_cross_entropy(logits=self.logits, multi_class_labels=tf.ones_like(self.logits))
+            self.g_loss_src = tf.losses.sigmoid_cross_entropy(logits=self.logits, multi_class_labels=tf.ones_like(self.logits)) + 0.0 * self.g_tv_loss_src
 
-            self.f_loss_src = tf.reduce_mean(tf.square(self.fx - self.fgfx)) * 15.0
+
+
+            self.fx_input = tf.placeholder(dtype=tf.float32,shape=shape)
+            self.f_loss_src = tf.reduce_mean(tf.square(self.fx_input - self.fgfx)) * 100.0
+
+            self.g_loss_src = self.g_loss_src + self.f_loss_src
             
             # optimizer
             self.d_optimizer_src = tf.train.AdamOptimizer(self.learning_rate)
@@ -141,6 +140,7 @@ class DTN(object):
             d_vars = [var for var in t_vars if 'Discriminator' in var.name]
             g_vars = [var for var in t_vars if 'Generator' in var.name]
             f_vars = [var for var in t_vars if 'discriminator' in var.name]
+
             
             # train op
             # with tf.name_scope('source_train_op'):
@@ -161,9 +161,12 @@ class DTN(object):
             
             # target domain (mnist)
             # self.fx = self.content_extractor(self.trg_images, reuse=True)
-            _, _, self.fx = dcgan.discriminator(self.trg_images, reuse=True)
-            print("self.fx is", self.fx)
-            self.reconst_images = self.generator(self.fx, reuse=True)
+            _, _, self.fx_trg = dcgan.discriminator(self.trg_images, reuse=True)
+            # self.random_fx = tf.random_shuffle(self.fx)
+            # tf.Graph.add_to_collection(, self.random_fx)
+
+            self.g_input_trg = tf.placeholder(dtype=tf.float32,shape=shape)
+            self.reconst_images = self.generator(self.g_input_trg, reuse=True)
             self.logits_fake = self.discriminator(self.reconst_images, reuse=True)
             self.logits_real = self.discriminator(self.trg_images, reuse=True)
             
@@ -176,11 +179,15 @@ class DTN(object):
 
             self.d_loss_trg = self.d_loss_fake_trg + self.d_loss_real_trg
 
+            b_s, h, w, _ = self.reconst_images.shape
+            self.g_tv_loss_trg = self.TV_loss(b_s, h, w, self.reconst_images)
+            print("get target tv loss")
+
             # self.g_loss_fake_trg = slim.losses.sigmoid_cross_entropy(self.logits_fake, tf.ones_like(self.logits_fake))
 
             self.g_loss_fake_trg = tf.losses.sigmoid_cross_entropy(logits=self.logits_fake, multi_class_labels=tf.ones_like(self.logits_fake))
-            self.g_loss_const_trg = tf.reduce_mean(tf.square(self.trg_images - self.reconst_images)) * 15.0
-            self.g_loss_trg = self.g_loss_fake_trg + self.g_loss_const_trg
+            self.g_loss_const_trg = tf.reduce_mean(tf.square(self.trg_images - self.reconst_images)) * 1.0
+            self.g_loss_trg = self.g_loss_fake_trg + self.g_loss_const_trg + 0.0 * self.g_tv_loss_trg
             
             # optimizer
             self.d_optimizer_trg = tf.train.AdamOptimizer(self.learning_rate)
