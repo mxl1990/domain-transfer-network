@@ -19,6 +19,15 @@ pp = pprint.PrettyPrinter()
 
 get_stddev = lambda x, k_h, k_w: 1/math.sqrt(k_w*k_h*x.get_shape()[-1])
 
+def getfilelist(file):
+  path = []
+  with open(file, 'r') as fp:
+    for line in fp:
+      path.append(line.strip())
+
+  return path
+
+
 # 采用多线程进行读取文件
 def get_batch_image(file_queue, batch_size, input_height, input_width,
                       resize_height=64, resize_width=64,
