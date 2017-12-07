@@ -21,7 +21,8 @@ class DCGAN(object):
 				 batch_size=64, sample_num = 64, output_height=64, output_width=64,
 				 y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
 				 gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-				 input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None):
+				 input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None,
+				 load_model=False):
 		"""
 		Args:
 			sess: TensorFlow session
@@ -34,6 +35,7 @@ class DCGAN(object):
 			dfc_dim: (optional) discrim全连接层的个数. [1024]
 			c_dim: (optional) 图片颜色的维度. 灰度图可以设置为1. [3]
 		"""
+		
 		self.sess = sess
 		self.is_crop = is_crop
 		self.is_grayscale = (c_dim == 1)
@@ -76,8 +78,36 @@ class DCGAN(object):
 		self.dataset_name = dataset_name
 		self.input_fname_pattern = input_fname_pattern
 		self.checkpoint_dir = checkpoint_dir
+		if load_model:
+			return self.load_model()
 		# 构建模型
 		self.build_model()
+
+	def load_model(self):
+		# return
+		if self.y_dim:
+			self.y= tf.placeholder(tf.float32, [self.batch_size, self.y_dim], name='y')
+
+		if self.is_crop:
+			image_dims = [self.output_height, self.output_width, self.c_dim]
+		else:
+			image_dims = [self.input_height, self.input_width, self.c_dim]
+
+		self.inputs = tf.placeholder(
+			tf.float32, [self.batch_size] + image_dims, name='real_images')
+
+		inputs = self.inputs
+
+		if self.y_dim:
+			self.D, self.D_logits, _ = \
+					self.discriminator(inputs, self.y, reuse=False)
+
+		else:
+			# 用discrim判别输入图像的真假
+			self.D, self.D_logits, _ = self.discriminator(inputs)
+
+
+
 
 	def build_model(self):
 		'''
