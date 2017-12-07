@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
@@ -13,9 +14,7 @@ class Solver(object):
 
     def __init__(self, sess, model, batch_size=64, pretrain_iter=20000, train_iter=20000, sample_iter=100, 
                  source_dir='source', target_dir='target', log_dir='logs', sample_save_path='sample', 
-                 model_save_path='model', 
-                 pretrained_model='D:\\workspace\\tensorflow-101.git\\DTN\\trunk\\checkpoint\\celebA_64_96_96\\DCGAN.model-18990', 
-                 test_model='model/dtn-20000'):
+                 model_save_path='model', pretrained_model='./checkpint', test_model='model/dtn-20000'):
         
         self.sess = sess
         self.model = model
@@ -30,9 +29,7 @@ class Solver(object):
         self.model_save_path = model_save_path
         self.pretrained_model = pretrained_model
         self.test_model = test_model
-        # self.config = tf.ConfigProto()
-        # self.config.gpu_options.allow_growth=True
-        # self.config.operation_timeout_in_ms = 10000000
+
 
     def load_images(self, image_dir, name='load_image'):
         import os
@@ -54,7 +51,7 @@ class Solver(object):
         return tf.train.batch_join(
                     images,
                     batch_size=self.batch_size,
-                    shapes=[96, 96, 3],
+                    shapes=[self.model.height, self.model.width, 3],
                     enqueue_many=False,
                     capacity=4*num_threads*self.batch_size,
                     allow_smaller_final_batch=True,
@@ -148,6 +145,9 @@ class Solver(object):
         # build a graph
         model = self.model
         model.build_model(sess)
+        from utils import show_all_variables
+        print("变量信息")
+        show_all_variables()
 
         #f函数用DCGAN代替
         
@@ -168,7 +168,10 @@ class Solver(object):
             print ('loading pretrained model F..')
             variables_to_restore = slim.get_model_variables(scope='discriminator')
             restorer = tf.train.Saver(variables_to_restore)
-            restorer.restore(sess, self.pretrained_model)
+            ckpt = tf.train.get_checkpoint_state(self.pretrained_model)  
+            if ckpt and ckpt.model_checkpoint_path:
+                restorer.restore(sess, ckpt.model_checkpoint_path)
+
             summary_writer = tf.summary.FileWriter(logdir=self.log_dir, graph=tf.get_default_graph())
             saver = tf.train.Saver()
 
@@ -177,80 +180,100 @@ class Solver(object):
             if ckpt and ckpt.model_checkpoint_path:
                 print("load trained model")
                 saver.restore(sess, ckpt.model_checkpoint_path)
-                print("laod trained model finished")  
+                print("load trained model finished")  
 
             print ('start training..!')
             f_interval = 15
-            for step in range(self.train_iter+1):
 
-                src_images = sess.run(source_image)
-                trg_images = sess.run(target_image)
-                
+            try:
+                for step in range(self.train_iter+1):
 
-                fx_dict = {model.src_images: src_images, model.trg_images: trg_images}
+                    src_images = sess.run(source_image)
+                    trg_images = sess.run(target_image)
+                    
 
-                fx_src, fx_trg = sess.run([model.fx_src, model.fx_trg], fx_dict)
-                # print("获取feature map结束")
+                    fx_dict = {model.src_images: src_images, model.trg_images: trg_images}
 
-                src_random, trg_random = fx_src.copy(), fx_trg.copy()
-                np.random.shuffle(src_random)
-                np.random.shuffle(trg_random)
-                feed_dict = {model.trg_images:trg_images, model.src_images: src_images,
-                             model.g_input_src:src_random, model.g_input_trg:trg_random, model.fx_input:fx_src}
-                
-                sess.run(model.d_train_op_src, feed_dict) 
-                sess.run([model.g_train_op_src], feed_dict)
-                sess.run([model.g_train_op_src], feed_dict) 
-                sess.run([model.g_train_op_src], feed_dict) 
-                sess.run([model.g_train_op_src], feed_dict) 
-                sess.run([model.g_train_op_src], feed_dict) 
-                sess.run([model.g_train_op_src], feed_dict)
-                
-                # if step > 1600:
-                #     f_interval = 30
-                
-                # if step % f_interval == 0:
-                #     sess.run(model.f_train_op_src, feed_dict)
-                
-                if (step+1) % 10 == 0:
-                    summary, dl, gl, fl = sess.run([model.summary_op_src, \
-                        model.d_loss_src, model.g_loss_src, model.f_loss_src], feed_dict)
-                    summary_writer.add_summary(summary, step)
-                    print ('[Source] step: [%d/%d] d_loss: [%.6f] g_loss: [%.6f] f_loss: [%.6f]' \
-                               %(step+1, self.train_iter, dl, gl, fl))
-                
-                # train the model for target domain T
-                # feed_dict = {model.src_images: src_images, model.trg_images: trg_images}
-                sess.run(model.d_train_op_trg, feed_dict)
-                sess.run(model.d_train_op_trg, feed_dict)
-                sess.run(model.g_train_op_trg, feed_dict)
-                sess.run(model.g_train_op_trg, feed_dict)
-                sess.run(model.g_train_op_trg, feed_dict)
-                sess.run(model.g_train_op_trg, feed_dict)
+                    fx_src, fx_trg = sess.run([model.fx_src, model.fx_trg], fx_dict)
+                    # print("获取feature map结束")
 
-                if (step+1) % 10 == 0:
-                    summary, dl, gl = sess.run([model.summary_op_trg, \
-                        model.d_loss_trg, model.g_loss_trg], feed_dict)
-                    summary_writer.add_summary(summary, step)
-                    print ('[Target] step: [%d/%d] d_loss: [%.6f] g_loss: [%.6f]' \
-                               %(step+1, self.train_iter, dl, gl))
-                    fx_dict = {model.src_images: src_images}
-                    fx_src = sess.run(model.fx_src, fx_dict)
-                    np.random.shuffle(fx_src)
-                    feed_dict = {model.g_input_src: fx_src}
-                    sampled_batch_images = sess.run(model.fake_images, feed_dict)
-                    # merge and save source images and sampled target images
-                    merged = self.merge_images(src_images, sampled_batch_images)
-                    path = os.path.join(self.sample_save_path, 'sample-%d-to-%d.png' %(step*self.batch_size, (step+1)*self.batch_size))
-                    scipy.misc.imsave(path, merged)
-                    print ('saved %s' %path)
+                    src_random, trg_random = fx_src.copy(), fx_trg.copy()
+                    # np.random.shuffle(src_random)
+                    # np.random.shuffle(trg_random)
+                    for k in range(self.batch_size):
+                        np.random.shuffle(src_random[k])
+                        np.random.shuffle(trg_random[k])
+                    # feed_dict = {model.trg_images:trg_images, model.src_images: src_images,}
+                    feed_dict = {model.g_input_src:src_random, model.g_input_trg:trg_random, model.src_images: src_images, model.trg_images: trg_images}
+
+                    for i in range(5):
+                        sess.run([model.d_train_op], feed_dict)
+
+                    sess.run([model.g_train_op], feed_dict)
+                    # sess.run([model.clip], feed_dict)
+                    
+                    # sess.run(model.d_train_op_src, feed_dict) 
+                    # sess.run([model.g_train_op_src], feed_dict)
+                    # sess.run([model.g_train_op_src], feed_dict) 
+                    # sess.run([model.g_train_op_src], feed_dict) 
+                    # sess.run([model.g_train_op_src], feed_dict) 
+                    # sess.run([model.g_train_op_src], feed_dict) 
+                    # sess.run([model.g_train_op_src], feed_dict)
+                    
+                    # if step > 1600:
+                    #     f_interval = 30
+                    
+                    # if step % f_interval == 0:
+                    #     sess.run(model.f_train_op_src, feed_dict)
+                    
+                    if (step+1) % 10 == 0:
+                        dl, gl = sess.run([model.d_loss, model.g_loss], feed_dict)
+                        # summary_writer.add_summary(summary, step)
+                        
+                    
+                    # train the model for target domain T
+                    # feed_dict = {model.src_images: src_images, model.trg_images: trg_images}
+                    # sess.run(model.d_train_op_trg, feed_dict)
+                    # sess.run(model.d_train_op_trg, feed_dict)
+                    # sess.run(model.g_train_op_trg, feed_dict)
+                    # sess.run(model.g_train_op_trg, feed_dict)
+                    # sess.run(model.g_train_op_trg, feed_dict)
+                    # sess.run(model.g_train_op_trg, feed_dict)
+
+                        # summary, dl, gl = sess.run([model.summary_op_trg, \
+                        #     model.d_loss_trg, model.g_loss_trg], feed_dict)
+                        # summary_writer.add_summary(summary, step)
+                        # print ('[Target] step: [%d/%d] d_loss: [%.6f] g_loss: [%.6f]' \
+                        #            %(step+1, self.train_iter, dl, gl))
+                        # fx_dict = {model.src_images: src_images}
+                        # fx_src = sess.run(model.fx_src, fx_dict)
+                        # np.random.shuffle(fx_src)
+                        # feed_dict = {model.g_input_src: fx_src}
+                        # sampled_batch_images = sess.run(model.fake_images, feed_dict)
+                        # feed_dict={model.src_images: src_images}
+                        sampled_batch_images = sess.run(model.fake_images, feed_dict)
+                        # merge and save source images and sampled target images
+                        merged = self.merge_images(src_images, sampled_batch_images)
+                        path = os.path.join(self.sample_save_path, 'sample-%d-to-%d.png' %(step*self.batch_size, (step+1)*self.batch_size))
+                        scipy.misc.imsave(path, merged)
+                        print ('step: [%d/%d] d_loss:[%.6f] g_loss:[%.6f] \nsaved %s'%(step+1, self.train_iter, dl, gl, path))
+                        target_batch_images = sess.run(model.reconst_images, feed_dict)
+                        merged = self.merge_images(trg_images, target_batch_images)
+                        path = os.path.join(self.sample_save_path, 'target-%d-to-%d.png' %(step*self.batch_size, (step+1)*self.batch_size))
+                        scipy.misc.imsave(path, merged)
+                        print("saved target images")
+                        # print ('saved %s' %path)
 
 
-                if (step+1) % 200 == 0:
-                    saver.save(sess, os.path.join(self.model_save_path, 'dtn'), global_step=step+1)
-                    print ('model/dtn-%d saved' %(step+1))
-            coord.request_stop()
-            coord.join(threads)
+                    if (step+1) % 200 == 0:
+                        saver.save(sess, os.path.join(self.model_save_path, 'dtn'), global_step=step+1)
+                        print ('model/dtn-%d saved' %(step+1))
+            except OSError as e:
+                print("Get an OSError")
+                print(e.massage)
+            finally:
+                coord.request_stop()
+                coord.join(threads)
                 
     def eval(self):
         # build model
